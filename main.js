@@ -137,17 +137,21 @@ const renderer = new THREE.WebGLRenderer({
   powerPreference: "high-performance",
 });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.15;
 container.appendChild(renderer.domElement);
 
-// 轨道控制器 (用于鸟瞰模式)
+// 轨道控制器 (用于鸟瞰模式，调高旋转/缩放/平移响应速度)
 const orbitControls = new OrbitControls(camera, renderer.domElement);
 orbitControls.enableDamping = true;
-orbitControls.dampingFactor = 0.06;
+orbitControls.dampingFactor = 0.12;
+orbitControls.rotateSpeed = 1.5;
+orbitControls.zoomSpeed = 2.0;
+orbitControls.panSpeed = 1.8;
 orbitControls.maxPolarAngle = Math.PI / 2 - 0.03;
 orbitControls.minDistance = 3;
 orbitControls.maxDistance = 115;
@@ -462,13 +466,12 @@ const materials = {
     roughness: 0.3,
     metalness: 0.1,
   }),
-  glassWall: new THREE.MeshPhysicalMaterial({
+  glassWall: new THREE.MeshStandardMaterial({
     color: 0xdff4ff,
     transparent: true,
-    opacity: 0.26,
-    roughness: 0.08,
-    metalness: 0.1,
-    transmission: 0.65,
+    opacity: 0.28,
+    roughness: 0.12,
+    metalness: 0.2,
     depthWrite: false,
   }),
   darkFrame: new THREE.MeshStandardMaterial({
@@ -482,16 +485,17 @@ const materials = {
   }),
 };
 
-// 创建可切换透视的屋顶材质
+// 共享可切换透视的屋顶材质，减少材质实例与状态切换开销
+const sharedRoofMaterial = new THREE.MeshStandardMaterial({
+  map: roofTex,
+  roughness: 0.65,
+  metalness: 0.1,
+  transparent: false,
+  opacity: 1.0,
+});
+
 function createRoofMaterial() {
-  const mat = new THREE.MeshStandardMaterial({
-    map: roofTex,
-    roughness: 0.65,
-    metalness: 0.1,
-    transparent: true,
-    opacity: 1.0,
-  });
-  return mat;
+  return sharedRoofMaterial;
 }
 
 // ==========================================
@@ -507,8 +511,8 @@ scene.add(hemiLight);
 const sunLight = new THREE.DirectionalLight(0xffb870, 1.45);
 sunLight.position.set(-28, 34, 24);
 sunLight.castShadow = true;
-sunLight.shadow.mapSize.width = 2048;
-sunLight.shadow.mapSize.height = 2048;
+sunLight.shadow.mapSize.width = 1024;
+sunLight.shadow.mapSize.height = 1024;
 sunLight.shadow.camera.near = 5;
 sunLight.shadow.camera.far = 135;
 const d = 44;
@@ -1104,12 +1108,12 @@ function buildCentralCourtyardDetails(parent) {
 
   const vatWater = new THREE.Mesh(
     new THREE.CylinderGeometry(1.04, 1.04, 0.1, 24),
-    new THREE.MeshPhysicalMaterial({
+    new THREE.MeshStandardMaterial({
       color: 0x16697a,
-      roughness: 0.1,
-      transmission: 0.5,
+      roughness: 0.12,
+      metalness: 0.25,
       transparent: true,
-      opacity: 0.88,
+      opacity: 0.85,
     }),
   );
   vatWater.position.set(0, 1.08, vatZ);
@@ -2425,21 +2429,17 @@ buildMainLivingRoom();
 buildProtagonistRoom();
 buildFatherRoom();
 create3DRoomLabels();
+renderer.shadowMap.needsUpdate = true;
 
 // ==========================================
 // 12. 屋顶透视开关、昼夜光影切换与视角状态管理
 // ==========================================
 function setRoofCutaway(enabled) {
   state.roofCutaway = enabled;
-  const targetOpacity = enabled ? 0.16 : 1.0;
-  roofMeshes.forEach((mesh) => {
-    if (mesh.material) {
-      mesh.material.transparent = true;
-      mesh.material.opacity = targetOpacity;
-      mesh.material.depthWrite = !enabled;
-      mesh.material.needsUpdate = true;
-    }
-  });
+  sharedRoofMaterial.transparent = enabled;
+  sharedRoofMaterial.opacity = enabled ? 0.16 : 1.0;
+  sharedRoofMaterial.depthWrite = !enabled;
+  sharedRoofMaterial.needsUpdate = true;
 
   const btn = document.getElementById("btn-toggle-roof");
   const txt = document.getElementById("roof-btn-text");
@@ -2511,6 +2511,10 @@ function updateUIForLocation(locKey) {
 function flyCameraTo(targetPos, targetLookAt, duration = 1100, onDone = null) {
   const startPos = camera.position.clone();
   const startDir = new THREE.Vector3();
+  camer快速相机飞行过渡 (大幅缩短过渡耗时，响应更敏捷)
+function flyCameraTo(targetPos, targetLookAt, duration = 420, onDone = null) {
+  const startPos = camera.position.clone();
+  const startDir = new THREE.Vector3();
   camera.getWorldDirection(startDir);
   const startLookAt =
     state.mode === "bird"
@@ -2541,9 +2545,9 @@ function switchToLocation(locKey) {
     } else if (locKey === "overview") {
       setRoofCutaway(false);
     }
-    flyCameraTo(loc.birdPos, loc.birdTarget, 1100);
+    flyCameraTo(loc.birdPos, loc.birdTarget, 450);
   } else {
-    // 第一人称漫游模式下，将视角直接平滑移入该房间内部站立点
+    // 第一人称漫游模式下，将视角直接快速移入该房间内部站立点
     state.fpvYaw = loc.fpvYaw;
     state.fpvPitch = loc.fpvPitch;
     const lookDir = new THREE.Vector3(
@@ -2552,7 +2556,7 @@ function switchToLocation(locKey) {
       -Math.cos(state.fpvYaw) * Math.cos(state.fpvPitch),
     );
     const targetLook = loc.fpvPos.clone().add(lookDir.multiplyScalar(6));
-    flyCameraTo(loc.fpvPos, targetLook, 850);
+    flyCameraTo(loc.fpvPos, targetLook, 360);
   }
 
   updateUIForLocation(locKey);
@@ -2590,7 +2594,7 @@ function switchBrowseMode(newMode) {
     const targetKey =
       state.currentLocation === "overview" ? "overview" : state.currentLocation;
     const loc = LOCATIONS[targetKey];
-    flyCameraTo(loc.birdPos, loc.birdTarget, 1100);
+    flyCameraTo(loc.birdPos, loc.birdTarget, 450);
   } else {
     // 进入第一人称漫游模式：关闭屋顶透视以获得真实室内天花板与屋檐体验
     setRoofCutaway(false);
@@ -2608,11 +2612,7 @@ function switchBrowseMode(newMode) {
       -Math.cos(state.fpvYaw) * Math.cos(state.fpvPitch),
     );
     const targetLook = loc.fpvPos.clone().add(lookDir.multiplyScalar(6));
-    flyCameraTo(loc.fpvPos, targetLook, 950);
-  }
-
-  updateUIForLocation(state.currentLocation);
-}
+    flyCameraTo(loc.fpvPos, targetLook, 40
 
 // ==========================================
 // 13. 第一人称漫游控制 (WASD + 鼠标拖拽/PointerLock + 碰撞边界)
@@ -2659,7 +2659,8 @@ function clampPlayerPosition(pos) {
 function updateFirstPersonMovement(dt) {
   if (state.mode !== "fpv" || state.cameraAnim) return;
 
-  const moveSpeed = (state.moveKeys.shift ? 8.5 : 5.2) * dt;
+  // 大幅提升第一人称漫游移速 (常规 12m/s，按住 Shift 疾跑 22m/s)
+  const moveSpeed = (state.moveKeys.shift ? 22.0 : 12.0) * dt;
   const forward = new THREE.Vector3(
     -Math.sin(state.fpvYaw),
     0,
@@ -2706,58 +2707,112 @@ function updateFirstPersonMovement(dt) {
       state.isGrounded = true;
     }
   } else if (moved) {
-    state.walkBobTimer += dt * 9.5;
-    camera.position.y = baseEyeY + Math.sin(state.walkBobTimer) * 0.045;
+    state.walkBobTimer += dt * 13.0;
+    camera.position.y = baseEyeY + Math.sin(state.walkBobTimer) * 0.04;
   } else {
-    camera.position.y = THREE.MathUtils.lerp(camera.position.y, baseEyeY, 0.2);
+    camera.position.y = THREE.MathUtils.lerp(camera.position.y, baseEyeY, 0.25);
   }
 
   applyFirstPersonLook();
 }
 
+// 鸟瞰模式下也支持 WASD / 方向键快速平移视角
+function updateBirdKeyboardPan(dt) {
+  if (state.mode !== "bird" || state.cameraAnim) return;
+  if (
+    !state.moveKeys.forward &&
+    !state.moveKeys.backward &&
+    !state.moveKeys.left &&
+    !state.moveKeys.right
+  ) {
+    return;
+  }
+
+  const panSpeed = (state.moveKeys.shift ? 38.0 : 22.0) * dt;
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  if (forward.lengthSq() > 0.0001) forward.normalize();
+
+  const right = new THREE.Vector3(forward.z, 0, -forward.x).normalize();
+  const moveOffset = new THREE.Vector3();
+
+  if (state.moveKeys.forward) moveOffset.addScaledVector(forward, panSpeed);
+  if (state.moveKeys.backward) moveOffset.addScaledVector(forward, -panSpeed);
+  if (state.moveKeys.right) moveOffset.addScaledVector(right, panSpeed);
+  if (state.moveKeys.left) moveOffset.addScaledVector(right, -panSpeed);
+
+  camera.position.add(moveOffset);
+  orbitControls.target.add(moveOffset);
+}
+
+// 缓存小地图 DOM 节点，避免每帧重复查询与无效样式重排
+const mapDotEl = document.getElementById("map-player-dot");
+const mapConeEl = mapDotEl ? mapDotEl.querySelector(".map-player-cone") : null;
+const _minimapDir = new THREE.Vector3();
+let _lastMapX = -1;
+let _lastMapY = -1;
+let _lastAngle = -999;
+
 // 更新右上角小地图上的玩家位置与朝向扇形 (对应 X:[-22, 22]->[6, 172], Z:[-32, 28]->[6, 230])
 function updateMinimapIndicator() {
-  const dot = document.getElementById("map-player-dot");
-  const cone = dot.querySelector(".map-player-cone");
-  const mapX = ((camera.position.x + 22) / 44) * 166 + 6;
-  const mapY = ((camera.position.z + 32) / 60) * 224 + 6;
-  dot.style.left = `${Math.max(6, Math.min(172, mapX))}px`;
-  dot.style.top = `${Math.max(6, Math.min(230, mapY))}px`;
+  if (!mapDotEl || !mapConeEl) return;
+  const mapX = Math.max(
+    6,
+    Math.min(172, ((camera.position.x + 22) / 44) * 166 + 6),
+  );
+  const mapY = Math.max(
+    6,
+    Math.min(230, ((camera.position.z + 32) / 60) * 224 + 6),
+  );
 
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
-  const angleDeg = Math.atan2(dir.x, -dir.z) * (180 / Math.PI);
-  cone.style.transform = `translate(-50%, 0) rotate(${angleDeg + 180}deg)`;
+  if (Math.abs(mapX - _lastMapX) > 0.1 || Math.abs(mapY - _lastMapY) > 0.1) {
+    mapDotEl.style.left = `${mapX.toFixed(1)}px`;
+    mapDotEl.style.top = `${mapY.toFixed(1)}px`;
+    _lastMapX = mapX;
+    _lastMapY = mapY;
+  }
+
+  camera.getWorldDirection(_minimapDir);
+  const angleDeg = Math.atan2(_minimapDir.x, -_minimapDir.z) * (180 / Math.PI);
+  if (Math.abs(angleDeg - _lastAngle) > 0.3) {
+    mapConeEl.style.transform = `translate(-50%, 0) rotate(${(angleDeg + 180).toFixed(1)}deg)`;
+    _lastAngle = angleDeg;
+  }
 }
 
 // ==========================================
 // 14. DOM 事件绑定与鼠标/键盘交互
-// ==========================================
-// 四个核心空间按钮
-document.querySelectorAll(".loc-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const target = btn.dataset.target;
-    switchToLocation(target);
-  });
-});
-
-// 小地图区域与垂花门点击直接跳转
-document.querySelectorAll(".map-zone, .map-chuihuamen").forEach((zone) => {
-  zone.addEventListener("click", () => {
-    const target = zone.dataset.target;
-    if (target) switchToLocation(target);
-  });
-});
-
-// 右上角“参考图”对照按钮
-const refBtn = document.getElementById("btn-ref-img");
-const refPopup = document.getElementById("ref-img-popup");
-if (refBtn && refPopup) {
-  refBtn.addEventListener("click", () => {
-    const isHidden = refPopup.classList.toggle("hidden");
-    refBtn.classList.toggle("active", !isHidden);
-  });
-}
+// ============== (按下移动键时立即打断未完成的飞行过渡，响应零延迟)
+window.addEventListener("keydown", (e) => {
+  switch (e.code) {
+    case "KeyW":
+    case "ArrowUp":
+      state.cameraAnim = null;
+      state.moveKeys.forward = true;
+      break;
+    case "KeyS":
+    case "ArrowDown":
+      state.cameraAnim = null;
+      state.moveKeys.backward = true;
+      break;
+    case "KeyA":
+    case "ArrowLeft":
+      state.cameraAnim = null;
+      state.moveKeys.left = true;
+      break;
+    case "KeyD":
+    case "ArrowRight":
+      state.cameraAnim = null;
+      state.moveKeys.right = true;
+      break;
+    case "ShiftLeft":
+    case "ShiftRight":
+      state.moveKeys.shift = true;
+      break;
+    case "Space":
+      if (state.mode === "fpv" && state.isGrounded) {
+        state.verticalVel = 5.5
 
 // 鸟瞰模式按钮 (若已在鸟瞰模式再次点击则回到全院总览)
 document.getElementById("btn-mode-bird").addEventListener("click", () => {
@@ -2859,10 +2914,7 @@ document.querySelectorAll(".dpad-btn").forEach((btn) => {
 
 // 第一人称下鼠标拖拽旋转视角 & 双击锁定视角 + 鸟瞰下点击3D房间标签跳转
 const raycaster = new THREE.Raycaster();
-const pointer = new THREE.Vector2();
-
-renderer.domElement.addEventListener("mousedown", (e) => {
-  if (state.mode === "fpv") {
+const poincameraAnim = null;
     state.isDraggingLook = true;
     state.prevMouse.x = e.clientX;
     state.prevMouse.y = e.clientY;
@@ -2874,9 +2926,19 @@ renderer.domElement.addEventListener("mousedown", (e) => {
     const hits = raycaster.intersectObjects(roomSprites);
     if (hits.length > 0 && hits[0].object.userData.targetLocation) {
       switchToLocation(hits[0].object.userData.targetLocation);
+    } else {
+      state.cameraAnim = null;
     }
   }
 });
+
+renderer.domElement.addEventListener(
+  "wheel",
+  () => {
+    state.cameraAnim = null;
+  },
+  { passive: true },
+);
 
 window.addEventListener("mouseup", () => {
   state.isDraggingLook = false;
@@ -2886,16 +2948,20 @@ window.addEventListener("mousemove", (e) => {
   if (state.mode !== "fpv") return;
 
   if (document.pointerLockElement === renderer.domElement) {
-    state.fpvYaw -= e.movementX * 0.0022;
+    state.fpvYaw -= e.movementX * 0.0032;
     state.fpvPitch = Math.max(
       -Math.PI / 2.4,
-      Math.min(Math.PI / 2.4, state.fpvPitch - e.movementY * 0.0022),
+      Math.min(Math.PI / 2.4, state.fpvPitch - e.movementY * 0.0032),
     );
   } else if (state.isDraggingLook) {
     const dx = e.clientX - state.prevMouse.x;
     const dy = e.clientY - state.prevMouse.y;
     state.prevMouse.x = e.clientX;
     state.prevMouse.y = e.clientY;
+    state.fpvYaw -= dx * 0.005;
+    state.fpvPitch = Math.max(
+      -Math.PI / 2.4,
+      Math.min(Math.PI / 2.4, state.fpvPitch - dy * 0.00
     state.fpvYaw -= dx * 0.0035;
     state.fpvPitch = Math.max(
       -Math.PI / 2.4,
@@ -2910,43 +2976,40 @@ renderer.domElement.addEventListener("dblclick", () => {
     if (document.pointerLockElement !== renderer.domElement) {
       renderer.domElement.requestPointerLock?.();
     } else {
-      document.exitPointerLock?.();
-    }
-  }
-});
-
-window.addEventListener("resize", () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-// ==========================================
-// 15. 主渲染循环与动态动画
-// ==========================================
-let lastTime = performance.now();
+const _lerpLookAt = new THREE.Vector3();
 
 function animate(now) {
   requestAnimationFrame(animate);
   const dt = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
 
-  // 1. 相机平滑过渡插值
+  // 1. 相机平滑过渡插值 (使用更轻快的 EaseOutQuart 曲线)
   if (state.cameraAnim) {
     const anim = state.cameraAnim;
     const elapsed = now - anim.startTime;
     const t = Math.min(elapsed / anim.duration, 1);
-    // EaseInOutCubic
-    const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const ease = 1 - Math.pow(1 - t, 4);
 
     camera.position.lerpVectors(anim.startPos, anim.endPos, ease);
-    const currentLook = new THREE.Vector3().lerpVectors(
-      anim.startLookAt,
-      anim.endLookAt,
-      ease,
-    );
+    _lerpLookAt.lerpVectors(anim.startLookAt, anim.endLookAt, ease);
 
     if (state.mode === "bird") {
+      orbitControls.target.copy(_lerpLookAt);
+      orbitControls.update();
+    } else {
+      camera.lookAt(_lerpLookAt);
+    }
+
+    if (t >= 1) {
+      const doneCb = anim.onDone;
+      state.cameraAnim = null;
+      if (state.mode === "fpv") {
+        applyFirstPersonLook();
+      }
+      if (doneCb) doneCb();
+    }
+  } else if (state.mode === "bird") {
+    updateBirdKeyboardPan(dt);
       orbitControls.target.copy(currentLook);
       orbitControls.update();
     } else {
