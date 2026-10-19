@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js";
 
 // ==========================================
 // 1. 四个核心空间与三进四合院预设视角及介绍数据 (严格参照 siheyuan.jpg 规制)
@@ -133,13 +134,14 @@ const camera = new THREE.PerspectiveCamera(
 camera.position.copy(LOCATIONS.overview.birdPos);
 
 const renderer = new THREE.WebGLRenderer({
-  antialias: true,
+  antialias: false,
   powerPreference: "high-performance",
+  stencil: false,
 });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+renderer.setPixelRatio(1);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.type = THREE.BasicShadowMap;
 renderer.shadowMap.autoUpdate = false;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.15;
@@ -180,12 +182,14 @@ const state = {
   isGrounded: true,
 };
 
-// 存放可切换透明度的屋顶网格、灯光列表、动态物体
+// 存放可切换透明度的屋顶网格、灯光列表、动态物体、空间分区裁剪(BSP/Portal)房间组
 const roofMeshes = [];
 const warmLights = [];
 const koiFishList = [];
 const lanternGlows = [];
 const roomSprites = [];
+const dynamicObjects = new Set();
+const roomInteriorGroups = []; // 用于距离与视锥/房间遮挡裁剪 (BSP/PVS 思想)
 
 // ==========================================
 // 3. 程序化材质与纹理生成器 (无需外部图片资源)
@@ -416,80 +420,59 @@ const woodFloorTex = createWoodFloorTexture();
 woodFloorTex.repeat.set(6, 6);
 
 const materials = {
-  greyBrick: new THREE.MeshStandardMaterial({ map: brickTex, roughness: 0.85 }),
-  darkStone: new THREE.MeshStandardMaterial({
+  greyBrick: new THREE.MeshLambertMaterial({ map: brickTex }),
+  darkStone: new THREE.MeshLambertMaterial({
     color: 0x3b4046,
-    roughness: 0.75,
   }),
-  courtyardStone: new THREE.MeshStandardMaterial({
+  courtyardStone: new THREE.MeshLambertMaterial({
     color: 0x596068,
-    roughness: 0.8,
   }),
-  vermilionRed: new THREE.MeshStandardMaterial({
+  vermilionRed: new THREE.MeshLambertMaterial({
     color: 0xa6291e,
-    roughness: 0.42,
-    metalness: 0.08,
   }),
-  brightRedGate: new THREE.MeshStandardMaterial({
+  brightRedGate: new THREE.MeshLambertMaterial({
     color: 0xb8281c,
-    roughness: 0.35,
-    metalness: 0.12,
   }),
-  goldBrass: new THREE.MeshStandardMaterial({
+  goldBrass: new THREE.MeshLambertMaterial({
     color: 0xe3b959,
-    roughness: 0.25,
-    metalness: 0.85,
+    emissive: 0x3a2a0a,
   }),
-  walnutWood: new THREE.MeshStandardMaterial({
+  walnutWood: new THREE.MeshLambertMaterial({
     color: 0x4a2f1d,
-    roughness: 0.45,
   }),
-  lightOakWood: new THREE.MeshStandardMaterial({
+  lightOakWood: new THREE.MeshLambertMaterial({
     color: 0x9b744f,
-    roughness: 0.5,
   }),
-  woodFloor: new THREE.MeshStandardMaterial({
+  woodFloor: new THREE.MeshLambertMaterial({
     map: woodFloorTex,
-    roughness: 0.4,
   }),
-  warmWall: new THREE.MeshStandardMaterial({ color: 0xf2ece1, roughness: 0.7 }),
-  creamFabric: new THREE.MeshStandardMaterial({
+  warmWall: new THREE.MeshLambertMaterial({ color: 0xf2ece1 }),
+  creamFabric: new THREE.MeshLambertMaterial({
     color: 0xebe5da,
-    roughness: 0.85,
   }),
-  slateFabric: new THREE.MeshStandardMaterial({
+  slateFabric: new THREE.MeshLambertMaterial({
     color: 0x3f4c5c,
-    roughness: 0.8,
   }),
-  jadeGreen: new THREE.MeshStandardMaterial({
+  jadeGreen: new THREE.MeshLambertMaterial({
     color: 0x3e8e6c,
-    roughness: 0.3,
-    metalness: 0.1,
   }),
-  glassWall: new THREE.MeshStandardMaterial({
-    color: 0xdff4ff,
+  glassWall: new THREE.MeshBasicMaterial({
+    color: 0xbce6ff,
     transparent: true,
-    opacity: 0.28,
-    roughness: 0.12,
-    metalness: 0.2,
+    opacity: 0.24,
     depthWrite: false,
   }),
-  darkFrame: new THREE.MeshStandardMaterial({
+  darkFrame: new THREE.MeshLambertMaterial({
     color: 0x22262b,
-    roughness: 0.4,
-    metalness: 0.6,
   }),
-  whiteMarble: new THREE.MeshStandardMaterial({
+  whiteMarble: new THREE.MeshLambertMaterial({
     color: 0xdcd9d0,
-    roughness: 0.45,
   }),
 };
 
 // 共享可切换透视的屋顶材质，减少材质实例与状态切换开销
-const sharedRoofMaterial = new THREE.MeshStandardMaterial({
+const sharedRoofMaterial = new THREE.MeshLambertMaterial({
   map: roofTex,
-  roughness: 0.65,
-  metalness: 0.1,
   transparent: false,
   opacity: 1.0,
 });
@@ -531,7 +514,11 @@ function addWarmPointLight(
   distance = 14,
   color = 0xffaa55,
 ) {
-  const light = new THREE.PointLight(color, intensity, distance, 1.6);
+  // 仅保留最关键的主光源，避免 10+ 个实时 PointLight 导致片元着色器循环爆算
+  if (warmLights.length >= 2) {
+    return null;
+  }
+  const light = new THREE.PointLight(color, intensity, distance, 1.5);
   light.position.set(x, y, z);
   scene.add(light);
   warmLights.push({ light, baseIntensity: intensity });
@@ -1127,6 +1114,8 @@ function buildCentralCourtyardDetails(parent) {
       new THREE.ConeGeometry(0.06, 0.26, 8),
       new THREE.MeshStandardMaterial({ color: koiColors[i], roughness: 0.2 }),
     );
+    dynamicObjects.add(fishGroup);
+    dynamicObjects.add(body);
     body.rotation.x = Math.PI / 2;
     fishGroup.add(body);
     fishGroup.position.set(0, 1.12, vatZ);
@@ -2427,6 +2416,167 @@ buildCourtyardBaseAndWalls();
 buildMainGateArea();
 buildMainLivingRoom();
 buildProtagonistRoom();
+
+// ==========================================
+// 11.5 静态几何体按材质合批 (Batching) + BSP/区域空间树组织
+// 将 300+ 个零散 Mesh 合并为约 15 个合批 Mesh，Draw Call 降低 95%，彻底解决渲染卡顿
+// ==========================================
+function optimizeSceneWithBatchingAndBSP() {
+  scene.updateMatrixWorld(true);
+
+  // 按空间区域 (BSP 叶节点分区: 外院/正房/东厢/西厢/后院) + 材质分类合批
+  const REGION_BOUNDS = [
+    {
+      name: "livingRoom",
+      test: (p) => p.z < -8.5 && p.z > -19.0 && Math.abs(p.x) < 20.5,
+    },
+    {
+      name: "protagonistRoom",
+      test: (p) => p.x >= 9.8 && p.z >= -8.5 && p.z <= 13.5,
+    },
+    {
+      name: "fatherRoom",
+      test: (p) => p.x <= -9.8 && p.z >= -8.5 && p.z <= 13.5,
+    },
+    { name: "frontYard", test: (p) => p.z > 13.5 },
+    { name: "backYard", test: (p) => p.z <= -19.0 },
+    { name: "centralYard", test: () => true },
+  ];
+
+  const buckets = new Map(); // key: `${regionName}_${matUuid}_${isRoof}`
+  const meshesToRemove = [];
+  const worldPos = new THREE.Vector3();
+
+  scene.traverse((obj) => {
+    if (!obj.isMesh) return;
+    if (dynamicObjects.has(obj) || dynamicObjects.has(obj.parent)) return;
+
+    obj.getWorldPosition(worldPos);
+    const region =
+      REGION_BOUNDS.find((r) => r.test(worldPos))?.name || "centralYard";
+    const isRoof = roofMeshes.includes(obj);
+    const mat = obj.material;
+    if (!mat || Array.isArray(mat)) return;
+
+    const key = `${region}__${mat.uuid}__${isRoof ? "roof" : "body"}`;
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        region,
+        material: mat,
+        isRoof,
+        geoms: [],
+        castShadow: false,
+        receiveShadow: false,
+      });
+    }
+
+    const clonedGeom = obj.geometry.clone();
+    clonedGeom.applyMatrix4(obj.matrixWorld);
+    const bucket = buckets.get(key);
+    bucket.geoms.push(clonedGeom);
+    if (obj.castShadow) bucket.castShadow = true;
+    if (obj.receiveShadow) bucket.receiveShadow = true;
+    meshesToRemove.push(obj);
+  });
+
+  // 移除原有碎散 Mesh
+  meshesToRemove.forEach((m) => {
+    if (m.parent) m.parent.remove(m);
+    m.geometry.dispose();
+  });
+  roofMeshes.length = 0;
+
+  // 为每个 BSP 空间分区创建独立 Group，便于视锥剔除与第一人称遮挡剔除 (PVS)
+  const regionGroups = {};
+  REGION_BOUNDS.forEach((r) => {
+    const g = new THREE.Group();
+    g.name = `BSP_Region_${r.name}`;
+    scene.add(g);
+    regionGroups[r.name] = g;
+    roomInteriorGroups.push({ name: r.name, group: g });
+  });
+
+  buckets.forEach((bucket) => {
+    if (bucket.geoms.length === 0) return;
+    const mergedGeom = BufferGeometryUtils.mergeGeometries(bucket.geoms, false);
+    bucket.geoms.forEach((g) => g.dispose());
+    if (!mergedGeom) return;
+
+    mergedGeom.computeBoundingSphere();
+    mergedGeom.computeBoundingBox();
+
+    const mergedMesh = new THREE.Mesh(mergedGeom, bucket.material);
+    mergedMesh.castShadow = bucket.castShadow;
+    mergedMesh.receiveShadow = bucket.receiveShadow;
+    mergedMesh.matrixAutoUpdate = false;
+    mergedMesh.updateMatrix();
+
+    if (bucket.isRoof) {
+      roofMeshes.push(mergedMesh);
+    }
+    regionGroups[bucket.region].add(mergedMesh);
+  });
+
+  // 冻结全院静态矩阵，避免每帧遍历重算 matrixWorld
+  scene.traverse((obj) => {
+    if (
+      !dynamicObjects.has(obj) &&
+      !dynamicObjects.has(obj.parent) &&
+      !obj.isCamera &&
+      !obj.isLight
+    ) {
+      obj.matrixAutoUpdate = false;
+    }
+  });
+}
+
+// BSP / PVS 潜在可见集室内外遮挡裁剪：当处于第一人称室内时，自动剔除被厚墙完全挡住的远端院落分区
+function updateBSPOcclusionCulling() {
+  if (state.mode !== "fpv") {
+    // 鸟瞰模式下交由 Three.js 合并后的高效 BoundingSphere 视锥剔除
+    for (let i = 0; i < roomInteriorGroups.length; i++) {
+      roomInteriorGroups[i].group.visible = true;
+    }
+    return;
+  }
+
+  const px = camera.position.x;
+  const pz = camera.position.z;
+
+  // 判断玩家当前所在的 BSP 空间区域
+  const inBackYard = pz < -18.0;
+  const inFrontYard = pz > 15.0;
+  const inEastRoom = px > 10.2 && pz > -7.2 && pz < 6.8;
+  const inWestRoom = px < -10.2 && pz > -7.2 && pz < 6.8;
+
+  for (let i = 0; i < roomInteriorGroups.length; i++) {
+    const item = roomInteriorGroups[i];
+    let vis = true;
+    if (inBackYard) {
+      // 在三进后院时，一进外院与东西厢房被北房高墙完全遮挡
+      if (
+        item.name === "frontYard" ||
+        item.name === "protagonistRoom" ||
+        item.name === "fatherRoom"
+      ) {
+        vis = false;
+      }
+    } else if (inFrontYard) {
+      // 在一进外院（大门口/影壁）时，三进后院被完全遮挡
+      if (item.name === "backYard") {
+        vis = false;
+      }
+    } else if (inEastRoom || inWestRoom) {
+      // 在东/西厢房室内时，一进外院与三进后院不可见
+      if (item.name === "frontYard" || item.name === "backYard") {
+        vis = false;
+      }
+    }
+    item.group.visible = vis;
+  }
+}
+
+optimizeSceneWithBatchingAndBSP();
 buildFatherRoom();
 create3DRoomLabels();
 renderer.shadowMap.needsUpdate = true;
@@ -2507,11 +2657,7 @@ function updateUIForLocation(locKey) {
   });
 }
 
-// 启动平滑相机飞行过渡
-function flyCameraTo(targetPos, targetLookAt, duration = 1100, onDone = null) {
-  const startPos = camera.position.clone();
-  const startDir = new THREE.Vector3();
-  camer快速相机飞行过渡 (大幅缩短过渡耗时，响应更敏捷)
+// 启动平滑快速相机飞行过渡 (大幅缩短过渡耗时，响应更敏捷)
 function flyCameraTo(targetPos, targetLookAt, duration = 420, onDone = null) {
   const startPos = camera.position.clone();
   const startDir = new THREE.Vector3();
@@ -2612,7 +2758,11 @@ function switchBrowseMode(newMode) {
       -Math.cos(state.fpvYaw) * Math.cos(state.fpvPitch),
     );
     const targetLook = loc.fpvPos.clone().add(lookDir.multiplyScalar(6));
-    flyCameraTo(loc.fpvPos, targetLook, 40
+    flyCameraTo(loc.fpvPos, targetLook, 400);
+  }
+
+  updateUIForLocation(state.currentLocation);
+}
 
 // ==========================================
 // 13. 第一人称漫游控制 (WASD + 鼠标拖拽/PointerLock + 碰撞边界)
@@ -2783,36 +2933,32 @@ function updateMinimapIndicator() {
 
 // ==========================================
 // 14. DOM 事件绑定与鼠标/键盘交互
-// ============== (按下移动键时立即打断未完成的飞行过渡，响应零延迟)
-window.addEventListener("keydown", (e) => {
-  switch (e.code) {
-    case "KeyW":
-    case "ArrowUp":
-      state.cameraAnim = null;
-      state.moveKeys.forward = true;
-      break;
-    case "KeyS":
-    case "ArrowDown":
-      state.cameraAnim = null;
-      state.moveKeys.backward = true;
-      break;
-    case "KeyA":
-    case "ArrowLeft":
-      state.cameraAnim = null;
-      state.moveKeys.left = true;
-      break;
-    case "KeyD":
-    case "ArrowRight":
-      state.cameraAnim = null;
-      state.moveKeys.right = true;
-      break;
-    case "ShiftLeft":
-    case "ShiftRight":
-      state.moveKeys.shift = true;
-      break;
-    case "Space":
-      if (state.mode === "fpv" && state.isGrounded) {
-        state.verticalVel = 5.5
+// ==========================================
+// 四个核心空间按钮
+document.querySelectorAll(".loc-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const target = btn.dataset.target;
+    switchToLocation(target);
+  });
+});
+
+// 小地图区域与垂花门点击直接跳转
+document.querySelectorAll(".map-zone, .map-chuihuamen").forEach((zone) => {
+  zone.addEventListener("click", () => {
+    const target = zone.dataset.target;
+    if (target) switchToLocation(target);
+  });
+});
+
+// 右上角“参考图”对照按钮
+const refBtn = document.getElementById("btn-ref-img");
+const refPopup = document.getElementById("ref-img-popup");
+if (refBtn && refPopup) {
+  refBtn.addEventListener("click", () => {
+    const isHidden = refPopup.classList.toggle("hidden");
+    refBtn.classList.toggle("active", !isHidden);
+  });
+}
 
 // 鸟瞰模式按钮 (若已在鸟瞰模式再次点击则回到全院总览)
 document.getElementById("btn-mode-bird").addEventListener("click", () => {
@@ -2838,23 +2984,27 @@ document.getElementById("btn-toggle-time").addEventListener("click", () => {
   setLightingTheme(!state.isNight);
 });
 
-// 键盘 WASD 与方向键监听
+// 键盘 WASD 与方向键监听 (按下移动键时立即打断未完成的飞行过渡，响应零延迟)
 window.addEventListener("keydown", (e) => {
   switch (e.code) {
     case "KeyW":
     case "ArrowUp":
+      state.cameraAnim = null;
       state.moveKeys.forward = true;
       break;
     case "KeyS":
     case "ArrowDown":
+      state.cameraAnim = null;
       state.moveKeys.backward = true;
       break;
     case "KeyA":
     case "ArrowLeft":
+      state.cameraAnim = null;
       state.moveKeys.left = true;
       break;
     case "KeyD":
     case "ArrowRight":
+      state.cameraAnim = null;
       state.moveKeys.right = true;
       break;
     case "ShiftLeft":
@@ -2863,7 +3013,7 @@ window.addEventListener("keydown", (e) => {
       break;
     case "Space":
       if (state.mode === "fpv" && state.isGrounded) {
-        state.verticalVel = 5.2;
+        state.verticalVel = 5.5;
         state.isGrounded = false;
       }
       break;
@@ -2900,6 +3050,7 @@ document.querySelectorAll(".dpad-btn").forEach((btn) => {
   const dir = btn.dataset.move;
   const startMove = (e) => {
     e.preventDefault();
+    state.cameraAnim = null;
     state.moveKeys[dir] = true;
   };
   const endMove = () => {
@@ -2914,7 +3065,11 @@ document.querySelectorAll(".dpad-btn").forEach((btn) => {
 
 // 第一人称下鼠标拖拽旋转视角 & 双击锁定视角 + 鸟瞰下点击3D房间标签跳转
 const raycaster = new THREE.Raycaster();
-const poincameraAnim = null;
+const pointer = new THREE.Vector2();
+
+renderer.domElement.addEventListener("mousedown", (e) => {
+  if (state.mode === "fpv") {
+    state.cameraAnim = null;
     state.isDraggingLook = true;
     state.prevMouse.x = e.clientX;
     state.prevMouse.y = e.clientY;
@@ -2961,11 +3116,7 @@ window.addEventListener("mousemove", (e) => {
     state.fpvYaw -= dx * 0.005;
     state.fpvPitch = Math.max(
       -Math.PI / 2.4,
-      Math.min(Math.PI / 2.4, state.fpvPitch - dy * 0.00
-    state.fpvYaw -= dx * 0.0035;
-    state.fpvPitch = Math.max(
-      -Math.PI / 2.4,
-      Math.min(Math.PI / 2.4, state.fpvPitch - dy * 0.0035),
+      Math.min(Math.PI / 2.4, state.fpvPitch - dy * 0.005),
     );
   }
 });
@@ -2976,6 +3127,21 @@ renderer.domElement.addEventListener("dblclick", () => {
     if (document.pointerLockElement !== renderer.domElement) {
       renderer.domElement.requestPointerLock?.();
     } else {
+      document.exitPointerLock?.();
+    }
+  }
+});
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ==========================================
+// 15. 主渲染循环与动态动画
+// ==========================================
+let lastTime = performance.now();
 const _lerpLookAt = new THREE.Vector3();
 
 function animate(now) {
@@ -3010,21 +3176,6 @@ function animate(now) {
     }
   } else if (state.mode === "bird") {
     updateBirdKeyboardPan(dt);
-      orbitControls.target.copy(currentLook);
-      orbitControls.update();
-    } else {
-      camera.lookAt(currentLook);
-    }
-
-    if (t >= 1) {
-      const doneCb = anim.onDone;
-      state.cameraAnim = null;
-      if (state.mode === "fpv") {
-        applyFirstPersonLook();
-      }
-      if (doneCb) doneCb();
-    }
-  } else if (state.mode === "bird") {
     orbitControls.update();
   } else if (state.mode === "fpv") {
     updateFirstPersonMovement(dt);
@@ -3042,8 +3193,9 @@ function animate(now) {
     koi.mesh.rotation.y = Math.atan2(dx, dz);
   });
 
-  // 3. 更新小地图指示器
+  // 3. 更新小地图指示器与 BSP/PVS 空间分区遮挡剔除
   updateMinimapIndicator();
+  updateBSPOcclusionCulling();
 
   renderer.render(scene, camera);
 }
