@@ -468,7 +468,39 @@ const materials = {
   whiteMarble: new THREE.MeshLambertMaterial({
     color: 0xdcd9d0,
   }),
+  outerGround: new THREE.MeshLambertMaterial({
+    color: 0x23282e,
+  }),
+  lawnGreen: new THREE.MeshLambertMaterial({
+    color: 0x365e38,
+  }),
+  treeCanopy: new THREE.MeshLambertMaterial({
+    color: 0x3b6e38,
+  }),
+  bambooGreen: new THREE.MeshLambertMaterial({
+    color: 0x4b8b52,
+  }),
+  persimmonOrange: new THREE.MeshBasicMaterial({
+    color: 0xff5a1f,
+  }),
+  lanternRed: new THREE.MeshLambertMaterial({
+    color: 0xff3b28,
+    emissive: 0xff4411,
+    emissiveIntensity: 0.8,
+  }),
+  vatWater: new THREE.MeshBasicMaterial({
+    color: 0x16697a,
+    transparent: true,
+    opacity: 0.82,
+  }),
+  woolRug: new THREE.MeshLambertMaterial({
+    color: 0xd8cfc0,
+  }),
+  warmLamp: new THREE.MeshBasicMaterial({
+    color: 0xffdd99,
+  }),
 };
+lanternGlows.push(materials.lanternRed);
 
 // 共享可切换透视的屋顶材质，减少材质实例与状态切换开销
 const sharedRoofMaterial = new THREE.MeshLambertMaterial({
@@ -646,41 +678,34 @@ function createPitchedRoof(width, depth, ridgeHeight, orient = "EW") {
   return roofGroup;
 }
 
-// 创建中式红灯笼挂件
+// 创建中式红灯笼挂件 (共享材质以便静态合批)
 function createHangingLantern(x, y, z) {
   const g = new THREE.Group();
   g.position.set(x, y, z);
 
   const cord = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.02, 0.02, 0.45),
+    new THREE.CylinderGeometry(0.02, 0.02, 0.45, 6),
     materials.darkFrame,
   );
   cord.position.y = 0.22;
   g.add(cord);
 
-  const lanternMat = new THREE.MeshStandardMaterial({
-    color: 0xff3b28,
-    emissive: 0xff5522,
-    emissiveIntensity: 1.4,
-    roughness: 0.3,
-  });
   const body = new THREE.Mesh(
-    new THREE.SphereGeometry(0.24, 16, 12),
-    lanternMat,
+    new THREE.SphereGeometry(0.24, 10, 8),
+    materials.lanternRed,
   );
   body.scale.set(1, 0.82, 1);
   g.add(body);
-  lanternGlows.push(lanternMat);
 
   const capTop = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.12, 0.14, 0.06),
+    new THREE.CylinderGeometry(0.12, 0.14, 0.06, 8),
     materials.goldBrass,
   );
   capTop.position.y = 0.2;
   g.add(capTop);
 
   const capBot = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.12, 0.1, 0.06),
+    new THREE.CylinderGeometry(0.12, 0.1, 0.06, 8),
     materials.goldBrass,
   );
   capBot.position.y = -0.2;
@@ -698,7 +723,7 @@ function createClassicalTree(x, z, scale = 1.0, hasPersimmons = false) {
 
   // 树池青石围边
   const ring = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.15 * scale, 1.25 * scale, 0.32, 16),
+    new THREE.CylinderGeometry(1.15 * scale, 1.25 * scale, 0.32, 10),
     materials.whiteMarble,
   );
   ring.position.y = 0.16;
@@ -706,17 +731,13 @@ function createClassicalTree(x, z, scale = 1.0, hasPersimmons = false) {
 
   // 树干
   const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.24 * scale, 0.38 * scale, 3.6 * scale, 10),
+    new THREE.CylinderGeometry(0.24 * scale, 0.38 * scale, 3.6 * scale, 8),
     materials.walnutWood,
   );
   trunk.position.y = 1.8 * scale;
   trunk.castShadow = true;
   treeGroup.add(trunk);
 
-  const canopyMat = new THREE.MeshStandardMaterial({
-    color: 0x3b6e38,
-    roughness: 0.78,
-  });
   const canopyOffsets = [
     [0, 4.1 * scale, 0, 1.85 * scale],
     [-1.15 * scale, 3.7 * scale, 0.55 * scale, 1.38 * scale],
@@ -725,8 +746,8 @@ function createClassicalTree(x, z, scale = 1.0, hasPersimmons = false) {
   ];
   canopyOffsets.forEach(([cx, cy, cz, r]) => {
     const leaf = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(r, 1),
-      canopyMat,
+      new THREE.DodecahedronGeometry(r, 0),
+      materials.treeCanopy,
     );
     leaf.position.set(cx, cy, cz);
     leaf.castShadow = true;
@@ -734,18 +755,12 @@ function createClassicalTree(x, z, scale = 1.0, hasPersimmons = false) {
   });
 
   if (hasPersimmons) {
-    const persimmonMat = new THREE.MeshStandardMaterial({
-      color: 0xff5a1f,
-      emissive: 0xff3b00,
-      emissiveIntensity: 0.35,
-      roughness: 0.3,
-    });
-    for (let p = 0; p < 12; p++) {
-      const angle = (p / 12) * Math.PI * 2;
+    for (let p = 0; p < 10; p++) {
+      const angle = (p / 10) * Math.PI * 2;
       const rad = (1.05 + (p % 3) * 0.4) * scale;
       const fruit = new THREE.Mesh(
-        new THREE.SphereGeometry(0.11, 10, 10),
-        persimmonMat,
+        new THREE.SphereGeometry(0.11, 6, 6),
+        materials.persimmonOrange,
       );
       fruit.position.set(
         Math.cos(angle) * rad,
@@ -764,7 +779,7 @@ function buildCourtyardBaseAndWalls() {
   // 远景胡同地面
   const outerGround = new THREE.Mesh(
     new THREE.PlaneGeometry(180, 180),
-    new THREE.MeshStandardMaterial({ color: 0x23282e, roughness: 0.95 }),
+    materials.outerGround,
   );
   outerGround.rotation.x = -Math.PI / 2;
   outerGround.position.y = -0.05;
@@ -1069,10 +1084,6 @@ function buildCentralCourtyardDetails(parent) {
   addBox(parent, 18.8, 0.18, 2.6, materials.whiteMarble, 0, 0.09, -0.2);
 
   // 2. 十字甬道分隔出的四块庭院翠绿草坪/花圃
-  const lawnMat = new THREE.MeshStandardMaterial({
-    color: 0x365e38,
-    roughness: 0.9,
-  });
   const lawnCoords = [
     [-5.0, -4.6, 6.4, 5.4],
     [5.0, -4.6, 6.4, 5.4],
@@ -1080,13 +1091,13 @@ function buildCentralCourtyardDetails(parent) {
     [5.0, 6.2, 6.4, 10.2],
   ];
   lawnCoords.forEach(([lx, lz, lw, ld]) => {
-    addBox(parent, lw, 0.14, ld, lawnMat, lx, 0.07, lz);
+    addBox(parent, lw, 0.14, ld, materials.lawnGreen, lx, 0.07, lz);
   });
 
   // 3. 正房台阶正前方中轴线偏北：传统石雕/古铜【太平锦鲤大鱼缸】 (对应 siheyuan.jpg 院中大水缸)
   const vatZ = -5.8;
   const vatOuter = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.15, 0.88, 1.05, 24),
+    new THREE.CylinderGeometry(1.15, 0.88, 1.05, 16),
     materials.goldBrass,
   );
   vatOuter.position.set(0, 0.62, vatZ);
@@ -1094,14 +1105,8 @@ function buildCentralCourtyardDetails(parent) {
   parent.add(vatOuter);
 
   const vatWater = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.04, 1.04, 0.1, 24),
-    new THREE.MeshStandardMaterial({
-      color: 0x16697a,
-      roughness: 0.12,
-      metalness: 0.25,
-      transparent: true,
-      opacity: 0.85,
-    }),
+    new THREE.CylinderGeometry(1.04, 1.04, 0.1, 16),
+    materials.vatWater,
   );
   vatWater.position.set(0, 1.08, vatZ);
   parent.add(vatWater);
@@ -1111,8 +1116,8 @@ function buildCentralCourtyardDetails(parent) {
   for (let i = 0; i < 4; i++) {
     const fishGroup = new THREE.Group();
     const body = new THREE.Mesh(
-      new THREE.ConeGeometry(0.06, 0.26, 8),
-      new THREE.MeshStandardMaterial({ color: koiColors[i], roughness: 0.2 }),
+      new THREE.ConeGeometry(0.06, 0.26, 6),
+      new THREE.MeshBasicMaterial({ color: koiColors[i] }),
     );
     dynamicObjects.add(fishGroup);
     dynamicObjects.add(body);
@@ -1235,26 +1240,22 @@ function buildBambooCluster(parent, centerX, centerZ, count = 6) {
     const oz = Math.cos(i * 3.1) * 0.6;
     const h = 3.2 + (i % 3) * 0.65;
     const stalk = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.05, 0.065, h, 8),
-      stalkMat,
+
+  for (let i = 0; i < count; i++) {
+    const ox = Math.sin(i * 2.5) * 0.6;
+    const oz = Math.cos(i * 3.1) * 0.6;
+    const h = 3.2 + (i % 3) * 0.65;
+    const stalk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.065, h, 6),
+      materials.bambooGreen,
     );
     stalk.position.set(ox, h / 2, oz);
     stalk.castShadow = true;
     bambooGroup.add(stalk);
 
     const foliage = new THREE.Mesh(
-      new THREE.SphereGeometry(0.55, 8, 8),
-      stalkMat,
-    );
-    foliage.scale.set(1.2, 0.65, 1.2);
-    foliage.position.set(ox, h - 0.2, oz);
-    bambooGroup.add(foliage);
-  }
-  parent.add(bambooGroup);
-}
-
-// ==========================================
-// 7. 空间一：一进外院 · 大门口 (东南广亮大门 + 迎门影壁 + 南侧倒座房 + 西侧屏门)
+      new THREE.SphereGeometry(0.55, 6, 6),
+      materials.bambooGreen · 大门口 (东南广亮大门 + 迎门影壁 + 南侧倒座房 + 西侧屏门)
 // ==========================================
 function buildMainGateArea() {
   const gateGroup = new THREE.Group();
@@ -1388,9 +1389,8 @@ function buildMainGateArea() {
     map: createScreenWallMedallionTexture(),
     roughness: 0.4,
   });
-  const frontMedallion = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.15, 2.15),
-    medallionMat,
+  const frontMedallion = new THREE.MeLambertMaterial({
+    map: createScreenWallMedallionTexture()
   );
   frontMedallion.position.set(gx, 1.92, swZ + 0.26);
   gateGroup.add(frontMedallion);
@@ -1612,7 +1612,7 @@ function buildMainLivingRoom() {
   const rug = new THREE.Mesh(
     new THREE.BoxGeometry(8.6, 0.03, 4.8),
     new THREE.MeshStandardMaterial({ color: 0xd8cfc0, roughness: 0.92 }),
-  );
+  );materials.woolRug
   rug.position.set(0, floorY + 0.07, -13.6);
   rug.receiveShadow = true;
   room.add(rug);
@@ -1909,12 +1909,8 @@ function buildProtagonistRoom() {
     -5.4,
   );
   const lampShade = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.16, 0.22, 0.32, 14),
-    new THREE.MeshStandardMaterial({
-      color: 0xffdd99,
-      emissive: 0xffaa33,
-      emissiveIntensity: 0.9,
-    }),
+    new THREE.CylinderGeometry(0.16, 0.22, 0.32, 10),
+    materials.warmLamp,
   );
   lampShade.position.set(18.0, floorY + 0.78, -5.4);
   room.add(lampShade);
