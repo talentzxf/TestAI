@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>北京现代四合院 · 3D数字漫游体验</title>
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <!-- 3D 渲染画布容器 -->
+  <div id="canvas-container"></div>
+
+  <!-- 第一人称准星 -->
+  <div id="crosshair" class="hidden">
+    <div class="crosshair-dot"></div>
+    <div class="crosshair-ring"></div>
+  </div>
+
+  <!-- 顶部标题与环境控制栏 -->
+  <header class="top-bar">
+    <div class="brand">
+      <span class="brand-badge">京韵 · 新中式</span>
+      <div class="brand-text">
+        <h1>北京现代四合院 3D 漫游</h1>
+        <p id="current-scene-subtitle">当前位置：全景鸟瞰 · 庭院中心</p>
+      </div>
+    </div>
+
+    <div class="env-controls">
+      <button id="btn-toggle-roof" class="chip-btn" title="切换屋顶透视以便从上方观察室内">
+        <span class="icon">🏠</span>
+        <span id="roof-btn-text">屋顶半透视</span>
+      </button>
+      <button id="btn-toggle-time" class="chip-btn" title="切换昼夜光影氛围">
+        <span class="icon" id="time-icon">🌇</span>
+        <span id="time-btn-text">北京黄昏</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 左侧当前空间信息卡片 -->
+  <aside id="room-info-card" class="info-card">
+    <div class="info-header">
+      <span id="info-tag" class="info-tag">全院总览</span>
+      <h2 id="info-title">现代新中式四合院</h2>
+    </div>
+    <p id="info-desc">
+      融合老北京青砖灰瓦、朱门影壁与现代大面积落地玻璃幕墙、智能暖光系统。院内设镜面锦鲤池、汀步石与百年柿子树，形成“院藏天地”的当代居住美学。
+    </p>
+    <div class="info-highlights" id="info-highlights">
+      <span>✨ 落地玻璃幕墙</span>
+      <span>� 镜面水院</span>
+      <span>🏮 抄手游廊</span>
+    </div>
+  </aside>
+
+  <!-- 右上角实时户型导览小地图 (严格对应 siheyuan.jpg 三进四合院格局) -->
+  <div class="minimap-panel">
+    <div class="minimap-header">
+      <span class="minimap-title">三进四合院导览 (点击跳转)</span>
+      <button id="btn-ref-img" class="mini-ref-btn" title="查看 siheyuan.jpg 布局参考图">参考图</button>
+    </div>
+    <div class="minimap-box" id="minimap-box">
+      <!-- 第三进：后罩房与后院 -->
+      <div class="map-static map-houzhaofang">后罩房</div>
+      <div class="map-static map-backyard">后院</div>
+
+      <!-- 第二进：正房 + 左右耳房 -->
+      <div class="map-static map-ear-west">耳房</div>
+      <div class="map-zone map-main-hall" data-target="livingRoom" title="点击前往：正房客厅">
+        <span>正房客厅</span>
+      </div>
+      <div class="map-static map-ear-east">耳房</div>
+
+      <!-- 第二进：东西厢房 + 十字甬道中庭 + 抄手游廊 -->
+      <div class="map-zone map-west-wing" data-target="fatherRoom" title="点击前往：父亲房间 (西厢房)">
+        <span>西厢·父亲房</span>
+      </div>
+      <div class="map-courtyard">
+        <div class="map-cross-v"></div>
+        <div class="map-cross-h"></div>
+        <span>内院·游廊</span>
+      </div>
+      <div class="map-zone map-east-wing" data-target="protagonistRoom" title="点击前往：主角房间 (东厢房)">
+        <span>东厢·主角房</span>
+      </div>
+
+      <!-- 垂花门与一进院分界 -->
+      <div class="map-static map-chuihuamen" data-target="chuihuamen" title="点击查看：垂花门">垂花门</div>
+
+      <!-- 第一进：屏门、倒座房、影壁、大门 -->
+      <div class="map-static map-pingmen">屏门</div>
+      <div class="map-static map-daozuofang">倒座房</div>
+      <div class="map-static map-yingbi">影壁</div>
+      <div class="map-zone map-gate" data-target="mainGate" title="点击前往：大门口">
+        <span>大门</span>
+      </div>
+
+      <!-- 摄像机位置指示点 -->
+      <div id="map-player-dot" class="map-player-dot">
+        <div class="map-player-cone"></div>
+      </div>
+    </div>
+    <!-- 原图对照浮窗 -->
+    <div id="ref-img-popup" class="ref-img-popup hidden">
+      <div class="ref-popup-title">标准北京三进四合院布局 (siheyuan.jpg)</div>
+      <img src="siheyuan.jpg" alt="四合院参考布局图" />
+    </div>
+  </div>
+
+  <!-- 第一人称漫游提示浮层 -->
+  <div id="fpv-hint" class="fpv-hint hidden">
+    <div class="fpv-hint-content">
+      <strong>🚶 第一人称室内外漫游已开启</strong>
+      <span>键盘 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 或 <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> 移动 · 鼠标拖拽或点击画面锁定视角环顾 · <kbd>Shift</kbd> 加速 · <kbd>Space</kbd> 轻跃</span>
+      <div class="fpv-mobile-dpad">
+        <button class="dpad-btn" data-move="forward">▲ 前进</button>
+        <div class="dpad-row">
+          <button class="dpad-btn" data-move="left">◀ 左移</button>
+          <button class="dpad-btn" data-move="backward">▼ 后退</button>
+          <button class="dpad-btn" data-move="right">▶ 右移</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部核心控制面板：视角模式 + 四大空间切换按钮 -->
+  <nav class="bottom-dock">
+    <!-- 模式切换组 -->
+    <div class="dock-section mode-group">
+      <span class="dock-label">浏览模式</span>
+      <div class="btn-group">
+        <button id="btn-mode-bird" class="dock-btn mode-btn active" data-mode="bird">
+          <span class="btn-icon">🦅</span>
+          <div class="btn-text-wrap">
+            <span class="btn-main">鸟瞰模式</span>
+            <span class="btn-sub">高空环视 / 缩放</span>
+          </div>
+        </button>
+        <button id="btn-mode-fpv" class="dock-btn mode-btn" data-mode="fpv">
+          <span class="btn-icon">🚶</span>
+          <div class="btn-text-wrap">
+            <span class="btn-main">第一人称漫游</span>
+            <span class="btn-sub">WASD自由行走</span>
+          </div>
+        </button>
+      </div>
+    </div>
+
+    <div class="dock-divider"></div>
+
+    <!-- 房间与地点切换组 -->
+    <div class="dock-section location-group">
+      <span class="dock-label">空间快速切换</span>
+      <div class="btn-group">
+        <button class="dock-btn loc-btn" data-target="mainGate" id="btn-loc-mainGate">
+          <span class="btn-icon">🚪</span>
+          <div class="btn-text-wrap">
+            <span class="btn-main">大门口</span>
+            <span class="btn-sub">朱门抱鼓 · 砖雕影壁</span>
+          </div>
+        </button>
+
+        <button class="dock-btn loc-btn" data-target="livingRoom" id="btn-loc-livingRoom">
+          <span class="btn-icon">🛋️</span>
+          <div class="btn-text-wrap">
+            <span class="btn-main">正房客厅</span>
+            <span class="btn-sub">北房挑高 · 水墨会客</span>
+          </div>
+        </button>
+
+        <button class="dock-btn loc-btn" data-target="protagonistRoom" id="btn-loc-protagonistRoom">
+          <span class="btn-icon">💻</span>
+          <div class="btn-text-wrap">
+            <span class="btn-main">主角房间</span>
+            <span class="btn-sub">东厢创客 · 现代卧室</span>
+          </div>
+        </button>
+
+        <button class="dock-btn loc-btn" data-target="fatherRoom" id="btn-loc-fatherRoom">
+          <span class="btn-icon">🍵</span>
+          <div class="btn-text-wrap">
+            <span class="btn-main">父亲房间</span>
+            <span class="btn-sub">西厢雅居 · 书香茶席</span>
+          </div>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
